@@ -47,6 +47,10 @@ class NewAttributeError(PyMISPError):
     pass
 
 
+class SearchError(PyMISPError):
+    pass
+
+
 class MissingDependency(PyMISPError):
     pass
 
@@ -101,24 +105,18 @@ class PyMISP(object):
         self.out_type = out_type
         self.debug = debug
 
-        self.categories = ['Internal reference', 'Targeting data', 'Antivirus detection',
-                           'Payload delivery', 'Payload installation', 'Artifacts dropped',
-                           'Persistence mechanism', 'Network activity', 'Payload type',
-                           'Attribution', 'External analysis', 'Other']
-        self.types = ['md5', 'sha1', 'sha256', 'filename', 'filename|md5', 'filename|sha1',
-                      'filename|sha256', 'ip-src', 'ip-dst', 'hostname', 'domain', 'url',
-                      'user-agent', 'http-method', 'regkey', 'regkey|value', 'AS', 'snort',
-                      'pattern-in-file', 'pattern-in-traffic', 'pattern-in-memory', 'named pipe',
-                      'mutex', 'vulnerability', 'attachment', 'malware-sample', 'link', 'comment',
-                      'text', 'email-src', 'email-dst', 'email-subject', 'email-attachment',
-                      'yara', 'target-user', 'target-email', 'target-machine', 'target-org',
-                      'target-location', 'target-external', 'other', 'threat-actor']
-
         try:
             # Make sure the MISP instance is working and the URL is valid
             self.get_version()
         except Exception as e:
             raise PyMISPError('Unable to connect to MISP ({}). Please make sure the API key and the URL are correct (http/https is required): {}'.format(self.root_url, e))
+
+        session = self.__prepare_session(out_type)
+        self.describe_types = session.get(urljoin(self.root_url, 'attributes/describeTypes.json')).json()
+
+        self.categories = self.describe_types['result']['categories']
+        self.types = self.describe_types['result']['types']
+        self.category_type_mapping = self.describe_types['result']['category_type_mappings']
 
     def __prepare_session(self, force_out=None):
         """
@@ -170,6 +168,8 @@ class PyMISP(object):
             raise PyMISPError('Unknown error: {}'.format(response.text))
 
         errors = []
+        if isinstance(to_return, list):
+            to_return = {'response': to_return}
         if to_return.get('error'):
             if not isinstance(to_return['error'], list):
                 errors.append(to_return['error'])
@@ -290,11 +290,14 @@ class PyMISP(object):
         to_return = {}
         if category not in self.categories:
             raise NewAttributeError('{} is invalid, category has to be in {}'.format(category, (', '.join(self.categories))))
-        to_return['category'] = category
 
         if type_value not in self.types:
             raise NewAttributeError('{} is invalid, type_value has to be in {}'.format(type_value, (', '.join(self.types))))
+
+        if type_value not in self.category_type_mapping[category]:
+            raise NewAttributeError('{} and {} is an invalid combinaison, type_value for this category has to be in {}'.format(type_value, category, (', '.join(self.category_type_mapping[category]))))
         to_return['type'] = type_value
+        to_return['category'] = category
 
         if to_ids not in [True, False]:
             raise NewAttributeError('{} is invalid, to_ids has to be True or False'.format(to_ids))
@@ -393,10 +396,7 @@ class PyMISP(object):
             response = self.update_event(event['Event']['id'], event, 'json')
         return self._check_response(response)
 
-    def add_hashes(self, event, category='Artifacts dropped', filename=None, md5=None, sha1=None, sha256=None, comment=None, to_ids=True, distribution=None, proposal=False):
-        categories = ['Payload delivery', 'Artifacts dropped', 'Payload installation', 'External analysis']
-        if category not in categories:
-            raise NewAttributeError('{} is invalid, category has to be in {}'.format(category, (', '.join(categories))))
+    def add_hashes(self, event, category='Artifacts dropped', filename=None, md5=None, sha1=None, sha256=None, ssdeep=None, comment=None, to_ids=True, distribution=None, proposal=False):
 
         attributes = []
         type_value = '{}'
@@ -413,7 +413,15 @@ class PyMISP(object):
         if sha256:
             attributes.append(self._prepare_full_attribute(category, type_value.format('sha256'), value.format(sha256),
                                                            to_ids, comment, distribution))
+        if ssdeep:
+            attributes.append(self._prepare_full_attribute(category, type_value.format('ssdeep'), value.format(ssdeep),
+                                                           to_ids, comment, distribution))
 
+        return self._send_attributes(event, attributes, proposal)
+
+    def add_filename(self, event, filename, category='Artifacts dropped', to_ids=False, comment=None, distribution=None, proposal=False):
+        attributes = []
+        attributes.append(self._prepare_full_attribute(category, 'filename', filename, to_ids, comment, distribution))
         return self._send_attributes(event, attributes, proposal)
 
     def add_regkey(self, event, regkey, rvalue=None, category='Artifacts dropped', to_ids=True, comment=None, distribution=None, proposal=False):
@@ -451,6 +459,11 @@ class PyMISP(object):
         if not mutex.startswith('\\BaseNamedObjects\\'):
             mutex = '\\BaseNamedObjects\\{}'.format(mutex)
         attributes.append(self._prepare_full_attribute(category, 'mutex', mutex, to_ids, comment, distribution))
+        return self._send_attributes(event, attributes, proposal)
+
+    def add_yara(self, event, yara, category='Payload delivery', to_ids=False, comment=None, distribution=None, proposal=False):
+        attributes = []
+        attributes.append(self._prepare_full_attribute(category, 'yara', yara, to_ids, comment, distribution))
         return self._send_attributes(event, attributes, proposal)
 
     # ##### Network attributes #####
@@ -503,9 +516,6 @@ class PyMISP(object):
         return self._send_attributes(event, attributes, proposal)
 
     def add_email_dst(self, event, email, category='Payload delivery', to_ids=True, comment=None, distribution=None, proposal=False):
-        categories = ['Payload delivery', 'Network activity']
-        if category not in categories:
-            raise NewAttributeError('{} is invalid, category has to be in {}'.format(category, (', '.join(categories))))
         attributes = []
         attributes.append(self._prepare_full_attribute(category, 'email-dst', email, to_ids, comment, distribution))
         return self._send_attributes(event, attributes, proposal)
@@ -559,6 +569,28 @@ class PyMISP(object):
         attributes.append(self._prepare_full_attribute('Attribution', 'threat-actor', target, to_ids, comment, distribution))
         return self._send_attributes(event, attributes, proposal)
 
+    # ##### Internal reference attributes #####
+
+    def add_internal_link(self, event, reference, to_ids=False, comment=None, distribution=None, proposal=False):
+        attributes = []
+        attributes.append(self._prepare_full_attribute('Internal reference', 'link', reference, to_ids, comment, distribution))
+        return self._send_attributes(event, attributes, proposal)
+
+    def add_internal_comment(self, event, reference, to_ids=False, comment=None, distribution=None, proposal=False):
+        attributes = []
+        attributes.append(self._prepare_full_attribute('Internal reference', 'comment', reference, to_ids, comment, distribution))
+        return self._send_attributes(event, attributes, proposal)
+
+    def add_internal_text(self, event, reference, to_ids=False, comment=None, distribution=None, proposal=False):
+        attributes = []
+        attributes.append(self._prepare_full_attribute('Internal reference', 'text', reference, to_ids, comment, distribution))
+        return self._send_attributes(event, attributes, proposal)
+
+    def add_internal_other(self, event, reference, to_ids=False, comment=None, distribution=None, proposal=False):
+        attributes = []
+        attributes.append(self._prepare_full_attribute('Internal reference', 'other', reference, to_ids, comment, distribution))
+        return self._send_attributes(event, attributes, proposal)
+
     # ##################################################
     # ######### Upload samples through the API #########
     # ##################################################
@@ -567,17 +599,17 @@ class PyMISP(object):
         # Setup details of a new event
         if distribution not in [0, 1, 2, 3]:
             raise NewEventError('{} is invalid, the distribution has to be in 0, 1, 2, 3'.format(distribution))
-        if threat_level_id not in [0, 1, 2, 3]:
-            raise NewEventError('{} is invalid, the threat_level_id has to be in 0, 1, 2, 3'.format(threat_level_id))
+        if threat_level_id not in [1, 2, 3, 4]:
+            raise NewEventError('{} is invalid, the threat_level_id has to be in 1, 2, 3, 4'.format(threat_level_id))
         if analysis not in [0, 1, 2]:
             raise NewEventError('{} is invalid, the analysis has to be in 0, 1, 2'.format(analysis))
         return {'distribution': int(distribution), 'info': info,
                 'threat_level_id': int(threat_level_id), 'analysis': analysis}
 
-    def prepare_attribute(self, event_id, distribution, to_ids, category, info,
+    def prepare_attribute(self, event_id, distribution, to_ids, category, comment, info,
                           analysis, threat_level_id):
         to_post = {'request': {}}
-        authorized_categs = ['Payload delivery', 'Artifacts dropped', 'Payload Installation', 'External Analysis', 'Antivirus detection']
+        authorized_categs = ['Payload delivery', 'Artifacts dropped', 'Payload installation', 'External analysis', 'Network activity', 'Antivirus detection']
 
         if event_id is not None:
             try:
@@ -598,6 +630,7 @@ class PyMISP(object):
             raise NewAttributeError('{} is invalid, category has to be in {}'.format(category, (', '.join(authorized_categs))))
         to_post['request']['category'] = category
 
+        to_post['request']['comment'] = comment
         return to_post
 
     def _encode_file_to_upload(self, path):
@@ -605,9 +638,9 @@ class PyMISP(object):
             return base64.b64encode(f.read())
 
     def upload_sample(self, filename, filepath, event_id, distribution, to_ids,
-                      category, info, analysis, threat_level_id):
+                      category, comment, info, analysis, threat_level_id):
         to_post = self.prepare_attribute(event_id, distribution, to_ids, category,
-                                         info, analysis, threat_level_id)
+                                         comment, info, analysis, threat_level_id)
         to_post['request']['files'] = [{'filename': filename, 'data': self._encode_file_to_upload(filepath)}]
         return self._upload_sample(to_post)
 
@@ -626,31 +659,6 @@ class PyMISP(object):
     def _upload_sample(self, to_post):
         session = self.__prepare_session('json')
         url = urljoin(self.root_url, 'events/upload_sample')
-        response = session.post(url, data=json.dumps(to_post))
-        return self._check_response(response)
-
-    def upload_attachment(self, filename, filepath, event_id, distribution, to_ids,
-                          category, info, analysis, threat_level_id):
-        to_post = self.prepare_attribute(event_id, distribution, to_ids, category,
-                                         info, analysis, threat_level_id)
-        to_post['request']['files'] = [{'filename': filename, 'data': self._encode_file_to_upload(filepath)}]
-        return self._upload_sample(to_post)
-
-    def upload_attachmentlist(self, filepaths, event_id, distribution, to_ids, category,
-                              info, analysis, threat_level_id):
-        to_post = self.prepare_attribute(event_id, distribution, to_ids, category,
-                                         info, analysis, threat_level_id)
-        files = []
-        for path in filepaths:
-            if not os.path.isfile(path):
-                continue
-            files.append({'filename': os.path.basename(path), 'data': self._encode_file_to_upload(path)})
-        to_post['request']['files'] = files
-        return self._upload_sample(to_post)
-
-    def _upload_attachment(self, to_post):
-        session = self.__prepare_session('json')
-        url = urljoin(self.root_url, 'events/upload_attachment')
         response = session.post(url, data=json.dumps(to_post))
         return self._check_response(response)
 
@@ -709,6 +717,51 @@ class PyMISP(object):
         url = urljoin(self.root_url, 'events/{}'.format(path.lstrip('/')))
         query = {'request': query}
         response = session.post(url, data=json.dumps(query))
+        return self._check_response(response)
+
+    def search_index(self, published=None, eventid=None, tag=None, datefrom=None,
+                     dateto=None, eventinfo=None, threatlevel=None, distribution=None,
+                     analysis=None, attribute=None, org=None):
+        """
+            Search only at the index level. Use ! infront of value as NOT, default OR
+
+            :param published: Published (0,1)
+            :param eventid: Evend ID(s) | str or list
+            :param tag: Tag(s) | str or list
+            :param datefrom: First date, in format YYYY-MM-DD
+            :param datefrom: Last date, in format YYYY-MM-DD
+            :param eventinfo: Event info(s) to match | str or list
+            :param threatlevel: Threat level(s) (1,2,3,4) | str or list
+            :param distribution: Distribution level(s) (0,1,2,3) | str or list
+            :param analysis: Analysis level(s) (0,1,2) | str or list
+            :param org: Organisation(s) | str or list
+
+        """
+        allowed = {'published': published, 'eventid': eventid, 'tag': tag, 'Dateto': dateto,
+                   'Datefrom': datefrom, 'eventinfo': eventinfo, 'threatlevel': threatlevel,
+                   'distribution': distribution, 'analysis': analysis, 'attribute': attribute,
+                   'org': org}
+        rule_levels = {'distribution': ["0", "1", "2", "3", "!0", "!1", "!2", "!3"],
+                       'threatlevel': ["1", "2", "3", "4", "!1", "!2", "!3", "!4"],
+                       'analysis': ["0", "1", "2", "!0", "!1", "!2"]}
+        buildup_url = "events/index"
+
+        for rule in allowed.keys():
+            if allowed[rule] is not None:
+                if not isinstance(allowed[rule], list):
+                    allowed[rule] = [allowed[rule]]
+                allowed[rule] = map(str, allowed[rule])
+                if rule in rule_levels:
+                    if not set(allowed[rule]).issubset(rule_levels[rule]):
+                        raise SearchError('Values in your {} are invalid, has to be in {}'.format(rule, ', '.join(str(x) for x in rule_levels[rule])))
+                if type(allowed[rule]) == list:
+                    joined = '|'.join(str(x) for x in allowed[rule])
+                    buildup_url += '/search{}:{}'.format(rule, joined)
+                else:
+                    buildup_url += '/search{}:{}'.format(rule, allowed[rule])
+        session = self.__prepare_session('json')
+        url = urljoin(self.root_url, buildup_url)
+        response = session.get(url)
         return self._check_response(response)
 
     def search_all(self, value):
