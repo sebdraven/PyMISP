@@ -396,6 +396,15 @@ class PyMISP(object):
             response = self.update_event(event['Event']['id'], event, 'json')
         return self._check_response(response)
 
+    def add_named_attribute(self, event, category, type_value, value, to_ids=False, comment=None, distribution=None, proposal=False):
+        attributes = []
+        if value and category and type:
+            try:
+                attributes.append(self._prepare_full_attribute(category, type_value, value, to_ids, comment, distribution))
+            except NewAttributeError as e:
+                return e
+        return self._send_attributes(event, attributes, proposal)
+
     def add_hashes(self, event, category='Artifacts dropped', filename=None, md5=None, sha1=None, sha256=None, ssdeep=None, comment=None, to_ids=True, distribution=None, proposal=False):
 
         attributes = []
@@ -987,8 +996,66 @@ class PyMISP(object):
         url = urljoin(self.root_url, 'attributes/text/download/%s' % type_attr)
         response = session.get(url)
         return response
-    # ############## Deprecated (Pure XML API should not be used) ##################
 
+    # ############## Statistics ##################
+
+    def get_attributes_statistics(self, context='type', percentage=None, force_out=None):
+        """
+            Get attributes statistics from the MISP instance
+        """
+        session = self.__prepare_session(force_out)
+        if (context != 'category'):
+            context = 'type'
+        if(percentage!=None):
+            url = urljoin(self.root_url, 'attributes/attributeStatistics/{}/{}'.format(context, percentage))
+        else:
+            url = urljoin(self.root_url, 'attributes/attributeStatistics/{}'.format(context))
+        return session.get(url).json()
+
+    def get_tags_statistics(self, percentage=None, name_sort=None, force_out=None):
+        """
+        Get tags statistics from the MISP instance
+        """
+        session = self.__prepare_session(force_out)
+        if (percentage != None):
+            percentage = 'true'
+        else:
+            percentage = 'false'
+        if (name_sort != None):
+            name_sort = 'true'
+        else:
+            name_sort = 'false'
+        url = urljoin(self.root_url, 'tags/tagStatistics/{}/{}'.format(percentage, name_sort))
+        return session.get(url).json()
+
+# ############## Sightings ##################
+
+    def sighting_per_id(self, attribute_id, force_out=None):
+        session = self.__prepare_session(force_out)
+        url = urljoin(self.root_url, 'sightings/add/{}'.format(attribute_id))
+        return session.post(url)
+
+    def sighting_per_uuid(self, attribute_uuid, force_out=None):
+        session = self.__prepare_session(force_out)
+        url = urljoin(self.root_url, 'sightings/add/{}'.format(attribute_uuid))
+        return session.post(url)
+
+    def sighting_per_json(self, json_file, force_out=None):
+        session = self.__prepare_session(force_out)
+        jdata = json.load(open(json_file))
+        url = urljoin(self.root_url, 'sightings/add/')
+        return session.post(url, data=json.dumps(jdata))
+
+    # ############## Sharing Groups ##################
+
+    def get_sharing_groups(self):
+        session = self.__prepare_session(force_out=None)
+        url = urljoin(self.root_url, 'sharing_groups/index.json')
+        response =  session.get(url)
+        return self._check_response(response)['response'][0]
+
+
+    # ############## Deprecated (Pure XML API should not be used) ##################
     @deprecated
     def download_all(self):
         """
@@ -1012,3 +1079,5 @@ class PyMISP(object):
         template = urljoin(self.root_url, 'events/xml/download/{}/{}'.format(event_id, attach))
         session = self.__prepare_session('xml')
         return session.get(template)
+
+
