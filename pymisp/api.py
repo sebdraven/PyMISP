@@ -217,6 +217,24 @@ class PyMISP(object):
         url = urljoin(self.root_url, 'events/{}'.format(event_id))
         return session.get(url)
 
+    def get_stix_event(self, event_id=None, out_format="json", with_attachments=False, from_date=False, to_date=False, tags=False):
+        """
+            Get an event/events in STIX format
+        """
+        out_format = out_format.lower()
+        if tags:
+          if isinstance(tags, list):
+            tags = "&&".join(tags)
+        
+        session = self.__prepare_session(out_format)
+        url = urljoin(self.root_url, 
+                      "/events/stix/download/{}/{}/{}/{}/{}".format(
+                                        event_id, with_attachments, tags, from_date, to_date
+                                        ))
+        if self.debug:
+          print("Getting STIX event from {}".format(url))  
+        return session.get(url)
+ 
     def add_event(self, event, force_out=None):
         """
             Add a new event
@@ -339,6 +357,10 @@ class PyMISP(object):
         response = self.get_event(int(eid), 'json')
         return self._check_response(response)
 
+    def get_stix(self, **kwargs):
+        response = self.get_stix_event(**kwargs)
+        return self._check_response(response)
+
     def update(self, event):
         eid = event['Event']['id']
         response = self.update_event(eid, event, 'json')
@@ -366,14 +388,17 @@ class PyMISP(object):
 
     def remove_tag(self, event, tag):
         session = self.__prepare_session('json')
-        to_post = {'request': {'Event':{'id': event['Event']['id'], 'tag': tag}}}
+        to_post = {'request': {'Event': {'id': event['Event']['id'], 'tag': tag}}}
+
         response = session.post(urljoin(self.root_url, 'events/removeTag'), data=json.dumps(to_post))
 
         return self._check_response(response)
 
+
     def remove_all_tag(self, event):
         for id_tag in [tag['id'] for tag in event['Event']['Tag']]:
             yield self.remove_tag(event, id_tag)
+
 
     def change_threat_level(self, event, threat_level_id):
         event['Event']['threat_level_id'] = threat_level_id
@@ -426,6 +451,16 @@ class PyMISP(object):
             attributes.append(self._prepare_full_attribute(category, type_value.format('ssdeep'), value.format(ssdeep),
                                                            to_ids, comment, distribution))
 
+        return self._send_attributes(event, attributes, proposal)
+
+    def av_detection_link(self, event, link, category='Antivirus detection', to_ids=False, comment=None, distribution=None, proposal=False):
+        attributes = []
+        attributes.append(self._prepare_full_attribute(category, 'link', link, to_ids, comment, distribution))
+        return self._send_attributes(event, attributes, proposal)
+
+    def add_detection_name(self, event, name, category='Antivirus detection', to_ids=False, comment=None, distribution=None, proposal=False):
+        attributes = []
+        attributes.append(self._prepare_full_attribute(category, 'text', name, to_ids, comment, distribution))
         return self._send_attributes(event, attributes, proposal)
 
     def add_filename(self, event, filename, category='Artifacts dropped', to_ids=False, comment=None, distribution=None, proposal=False):
@@ -495,6 +530,11 @@ class PyMISP(object):
     def add_domain(self, event, domain, category='Network activity', to_ids=True, comment=None, distribution=None, proposal=False):
         attributes = []
         attributes.append(self._prepare_full_attribute(category, 'domain', domain, to_ids, comment, distribution))
+        return self._send_attributes(event, attributes, proposal)
+
+    def add_domain_ip(self, event, domain, ip, category='Network activity', to_ids=True, comment=None, distribution=None, proposal=False):
+        attributes = []
+        attributes.append(self._prepare_full_attribute(category, 'domain|ip', "%s|%s" % (domain, ip), to_ids, comment, distribution))
         return self._send_attributes(event, attributes, proposal)
 
     def add_url(self, event, url, category='Network activity', to_ids=True, comment=None, distribution=None, proposal=False):
@@ -889,10 +929,10 @@ class PyMISP(object):
                 archive = zipfile.ZipFile(zipped)
                 try:
                     # New format
-                    unzipped = BytesIO(archive.open(f['md5'], pwd='infected').read())
+                    unzipped = BytesIO(archive.open(f['md5'], pwd=b'infected').read())
                 except KeyError:
                     # Old format
-                    unzipped = BytesIO(archive.open(f['filename'], pwd='infected').read())
+                    unzipped = BytesIO(archive.open(f['filename'], pwd=b'infected').read())
                 details.append([f['event_id'], f['filename'], unzipped])
             except zipfile.BadZipfile:
                 # In case the sample isn't zipped
@@ -982,7 +1022,7 @@ class PyMISP(object):
         """
             Get the most recent version from github
         """
-        r = requests.get('https://raw.githubusercontent.com/MISP/MISP/master/VERSION.json')
+        r = requests.get('https://raw.githubusercontent.com/MISP/MISP/2.4/VERSION.json')
         if r.status_code == 200:
             master_version = json.loads(r.text)
             return {'version': '{}.{}.{}'.format(master_version['major'], master_version['minor'], master_version['hotfix'])}
@@ -1006,7 +1046,7 @@ class PyMISP(object):
         session = self.__prepare_session(force_out)
         if (context != 'category'):
             context = 'type'
-        if(percentage!=None):
+        if percentage is not None:
             url = urljoin(self.root_url, 'attributes/attributeStatistics/{}/{}'.format(context, percentage))
         else:
             url = urljoin(self.root_url, 'attributes/attributeStatistics/{}'.format(context))
@@ -1017,18 +1057,18 @@ class PyMISP(object):
         Get tags statistics from the MISP instance
         """
         session = self.__prepare_session(force_out)
-        if (percentage != None):
+        if percentage is not None:
             percentage = 'true'
         else:
             percentage = 'false'
-        if (name_sort != None):
+        if name_sort is not None:
             name_sort = 'true'
         else:
             name_sort = 'false'
         url = urljoin(self.root_url, 'tags/tagStatistics/{}/{}'.format(percentage, name_sort))
         return session.get(url).json()
 
-# ############## Sightings ##################
+    # ############## Sightings ##################
 
     def sighting_per_id(self, attribute_id, force_out=None):
         session = self.__prepare_session(force_out)
@@ -1051,9 +1091,8 @@ class PyMISP(object):
     def get_sharing_groups(self):
         session = self.__prepare_session(force_out=None)
         url = urljoin(self.root_url, 'sharing_groups/index.json')
-        response =  session.get(url)
+        response = session.get(url)
         return self._check_response(response)['response'][0]
-
 
     # ############## Deprecated (Pure XML API should not be used) ##################
     @deprecated
@@ -1079,5 +1118,3 @@ class PyMISP(object):
         template = urljoin(self.root_url, 'events/xml/download/{}/{}'.format(event_id, attach))
         session = self.__prepare_session('xml')
         return session.get(template)
-
-
