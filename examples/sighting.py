@@ -17,11 +17,9 @@ def init(url, key):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Add sighting.')
-    parser.add_argument("-f", "--json_file", help="The name of the json file describing the attribute you want to add sighting to.")
+    parser.add_argument("-f", "--json_file", required=True, help="The name of the json file describing the attribute you want to add sighting to.")
     args = parser.parse_args()
 
     misp = init(misp_url, misp_key)
 
     misp.sighting_per_json(args.json_file)
-    
-

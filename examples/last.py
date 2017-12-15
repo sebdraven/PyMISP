@@ -19,16 +19,13 @@ def download_last(m, last, out=None):
     result = m.download_last(last)
     if out is None:
         if 'response' in result:
-            for e in result['response']:
-                print(json.dumps(e) + '\n')
+            print(json.dumps(result['response']))
         else:
             print('No results for that time period')
             exit(0)
     else:
         with open(out, 'w') as f:
-            for e in result['response']:
-                f.write(json.dumps(e) + '\n')
-
+            f.write(json.dumps(result['response']))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Download latest events from a MISP instance.')

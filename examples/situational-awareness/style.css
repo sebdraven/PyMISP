@@ -29,11 +29,15 @@ table td
 {
 	border-left: 1px solid #cbcbcb;
 	border-width: 0 0 0 1px;
-	width: 150px;
+	width: 500px;
 	margin: 0;
 	padding: 0.5em 1em;
 }
 
+.test
+{
+	width: 500px;
+}
 
 table tr:nth-child(2n-1) td
 {

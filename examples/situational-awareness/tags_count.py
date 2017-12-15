@@ -5,8 +5,8 @@ from pymisp import PyMISP
 from keys import misp_url, misp_key, misp_verifycert
 from datetime import datetime
 import argparse
-import json
 import tools
+import date_tools
 
 
 def init(url, key):
@@ -14,11 +14,6 @@ def init(url, key):
 
 # ######### fetch data ##########
 
-
-def download_last(m, last):
-    result = m.download_last(last)
-    with open('data', 'w') as f:
-        f.write(json.dumps(result))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Take a sample of events (based on last.py) and give the repartition of tags in this sample.')
@@ -32,38 +27,33 @@ if __name__ == '__main__':
 
     if args.days is None:
         args.days = 7
-    download_last(misp, '{}d'.format(args.days))
+    result = misp.search(last='{}d'.format(args.days), metadata=True)
 
-    tools.checkDateConsistancy(args.begindate, args.enddate, tools.getLastdate(args.days))
+    date_tools.checkDateConsistancy(args.begindate, args.enddate, date_tools.getLastdate(args.days))
 
     if args.begindate is None:
-        args.begindate = tools.getLastdate(args.days)
+        args.begindate = date_tools.getLastdate(args.days)
     else:
-        args.begindate = tools.setBegindate(tools.toDatetime(args.begindate), tools.getLastdate(args.days))
+        args.begindate = date_tools.setBegindate(date_tools.toDatetime(args.begindate), date_tools.getLastdate(args.days))
 
     if args.enddate is None:
         args.enddate = datetime.now()
     else:
-        args.enddate = tools.setEnddate(tools.toDatetime(args.enddate))
+        args.enddate = date_tools.setEnddate(date_tools.toDatetime(args.enddate))
 
-    Events = tools.eventsListBuildFromArray('data')
-    TotalEvents = tools.getNbitems(Events)
-    Tags = tools.tagsListBuild(Events)
-    result = tools.getNbOccurenceTags(Tags)
-    TotalTags = tools.getNbitems(Tags)
-
-    Events = tools.selectInRange(Events, begin=args.begindate, end=args.enddate)
-    TotalPeriodEvents = tools.getNbitems(Events)
-    Tags = tools.tagsListBuild(Events)
-    result = tools.getNbOccurenceTags(Tags)
-    TotalPeriodTags = tools.getNbitems(Tags)
+    if 'response' in result:
+        events = tools.selectInRange(tools.eventsListBuildFromArray(result), begin=args.begindate, end=args.enddate)
+        tags = tools.tagsListBuild(events)
+        result = tools.getNbOccurenceTags(tags)
+    else:
+        result = 'There is no event during the studied period'
 
     text = 'Studied pediod: from '
     if args.begindate is None:
         text = text + '1970-01-01'
     else:
         text = text + str(args.begindate.date())
-    text = text + ' to '
+        text = text + ' to '
     if args.enddate is None:
         text = text + str(datetime.now().date())
     else:

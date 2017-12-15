@@ -5,7 +5,7 @@ from pymisp import PyMISP
 from keys import misp_url, misp_key, misp_verifycert
 import argparse
 import tools
-
+import pygal_tools
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Take a sample of events (based on last.py of searchall.py) and create a treemap epresenting the distribution of attributes in this sample.')
@@ -21,8 +21,11 @@ if __name__ == '__main__':
     else:
         result = misp.download_last(args.argument)
 
-    events = tools.eventsListBuildFromArray(result)
-    attributes = tools.attributesListBuild(events)
-    temp = tools.getNbAttributePerEventCategoryType(attributes)
-    temp = temp.groupby(level=['category', 'type']).sum()
-    tools.createTreemap(temp, 'Attributes Distribution', 'attribute_treemap.svg', 'attribute_table.html')
+    if 'response' in result:
+        events = tools.eventsListBuildFromArray(result)
+        attributes = tools.attributesListBuild(events)
+        temp = tools.getNbAttributePerEventCategoryType(attributes)
+        temp = temp.groupby(level=['category', 'type']).sum()
+        pygal_tools.createTreemap(temp, 'Attributes Distribution', 'attribute_treemap.svg', 'attribute_table.html')
+    else:
+        print ('There is no event answering the research criteria')
